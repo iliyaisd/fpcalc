@@ -1,6 +1,7 @@
 package fpcorr
 
 import (
+	"fmt"
 	"log"
 	"os/exec"
 	"regexp"
@@ -16,7 +17,6 @@ const (
 	// step size (in points) of cross correlation
 	step = 1
 	// minimum number of points that must overlap in cross correlation
-	// exception is raised if this cannot be met
 	minOverlap = 20
 	// report match when cross correlation has a peak exceeding threshold
 	threshold = 0.5
@@ -45,11 +45,9 @@ func calculateFingerprints(filename string) ([]int, error) {
 	return fingerprints, nil
 }
 
-func correlation(listx, listy []int) float64 {
+func correlation(listx, listy []int) (float64, error) {
 	if len(listx) == 0 || len(listy) == 0 {
-		// Error checking in main program should prevent us from ever being
-		// able to get here.
-		panic("Empty lists cannot be correlated.")
+		return 0, fmt.Errorf("empty lists cannot be correlated")
 	}
 	if len(listx) > len(listy) {
 		listx = listx[:len(listy)]
@@ -62,7 +60,7 @@ func correlation(listx, listy []int) float64 {
 		covariance += 32 - countOnes(listx[i]^listy[i])
 	}
 
-	return (float64(covariance) / float64(len(listx))) / float64(32)
+	return (float64(covariance) / float64(len(listx))) / float64(32), nil
 }
 
 func countOnes(num int) int {
@@ -76,7 +74,7 @@ func countOnes(num int) int {
 	return count
 }
 
-func crossCorrelation(listx, listy []int, offset int) float64 {
+func crossCorrelation(listx, listy []int, offset int) (float64, error) {
 	if offset > 0 {
 		listx = listx[offset:]
 		listy = listy[:len(listx)]
@@ -86,20 +84,24 @@ func crossCorrelation(listx, listy []int, offset int) float64 {
 		listx = listx[:len(listy)]
 	}
 	if min(len(listx), len(listy)) < minOverlap {
-		return 0
+		return 0, nil
 	}
 	return correlation(listx, listy)
 }
 
-func compare(listx, listy []int, span, step int) []float64 {
+func compare(listx, listy []int, span, step int) ([]float64, error) {
 	if span > min(len(listx), len(listy)) {
-		return nil
+		return nil, fmt.Errorf("cannot compare lists: their length is more than minimal overlap")
 	}
 	var corrXy []float64
 	for offset := -span; offset < span+1; offset += step {
-		corrXy = append(corrXy, crossCorrelation(listx, listy, offset))
+		crossCorr, err := crossCorrelation(listx, listy, offset)
+		if err != nil {
+			return nil, fmt.Errorf("cannot compare lists: %w", err)
+		}
+		corrXy = append(corrXy, crossCorr)
 	}
-	return corrXy
+	return corrXy, nil
 }
 
 func maxIndex(listx []float64) int {
@@ -142,7 +144,10 @@ func AudioCorrelate(source, target string) (float64, error) {
 		return 0, err
 	}
 
-	corr := compare(fingerprintSource, fingerprintTarget, span, step)
+	corr, err := compare(fingerprintSource, fingerprintTarget, span, step)
+	if err != nil {
+		return 0, fmt.Errorf("cannot compare fingerprints: %w", err)
+	}
 	maxCorr := getMaxCorr(corr, source, target)
 
 	return maxCorr, nil
